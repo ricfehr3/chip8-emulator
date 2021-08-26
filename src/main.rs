@@ -13,6 +13,27 @@ const PIXEL_WIDTH: usize = 64;
 const PIXEL_HEIGHT: usize = 32;
 const FOREGROUND_COLOR: u32 = 0xFFFFFFFF;
 const BACKGROUND_COLOR: u32 = 0x00000000;
+const STACK_SIZE: usize = 16;
+
+const CHIP8_FONTSET: [u8; 80] =
+[
+    0xF0, 0x90, 0x90, 0x90, 0xF0, //0
+    0x20, 0x60, 0x20, 0x20, 0x70, //1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, //2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, //3
+    0x90, 0x90, 0xF0, 0x10, 0x10, //4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, //5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, //6
+    0xF0, 0x10, 0x20, 0x40, 0x40, //7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, //8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, //9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, //A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, //B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, //C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, //D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, //E
+    0xF0, 0x80, 0xF0, 0x80, 0x80  //F
+];
 
 fn pause() {
     let mut stdout = stdout();
@@ -32,12 +53,23 @@ struct Chip8 {
     gfx: [u8; PIXEL_WIDTH * PIXEL_HEIGHT],
     draw_flag: bool,
 	keys: u16,
+    sp: usize,
+    stack: [usize; STACK_SIZE],
 }
 
 impl Chip8 {
     fn new() -> Chip8 {
+        let mut memory_tmp: [u8; 0x1000] = [0; 0x1000];
+
+        for x in 0..80 {
+            memory_tmp[x] = CHIP8_FONTSET[x];
+        }
+        //for (place, data) in CHIP8_FONTSET.iter_mut().zip(memory_tmp.iter()) {
+                //*place = *data
+        //}
+
         Chip8 {
-            memory: [0; 0x1000],
+            memory: memory_tmp,
             registers: [0; 16],
             pc: 0x200,
             old_pc: 0x200,
@@ -47,6 +79,8 @@ impl Chip8 {
             gfx: [0; PIXEL_WIDTH * PIXEL_HEIGHT],
             draw_flag: false,
 			keys: 0x0000,
+            sp: 0,
+            stack: [0; STACK_SIZE],
         }
     }
 
@@ -71,21 +105,32 @@ impl Chip8 {
         self.registers[offset as usize] = value;
     }
 
-    fn step(&mut self) {
-        let opcode = self.fetch_opcode().unwrap();
-        //println!("pc: {:#04x}, opcode: {:#04x}", self.pc, opcode);
+    fn execute_opcode(&mut self, opcode: u16) {
+        println!("pc: {:#04x}, opcode: {:#04x}", self.pc-2, opcode);
+        self.print_registers();
         match opcode {
-            0x00E0 => {
-                self.gfx.iter_mut().for_each(|m| *m = 0);
+            0x0000..0x0FFF => {
+                if opcode == 0x00E0 {
+                    self.gfx.iter_mut().for_each(|m| *m = 0);
+                    self.draw_flag = true;
+                } else if opcode == 0x00EE {
+                    self.sp -= 1;
+                    self.pc = self.stack[self.sp];
+                } else {
+                    panic!("Invalid opcode {:#04x}", opcode);
+                    //let address = (opcode & 0xFFF) as usize;
+                    //let hi = self.memory[address];
+                    //let lo = self.memory[address + 1];
+                    //let sub_opcode = ((hi as u16) << 8) | (lo as u16);
+                    //self.execute_opcode(sub_opcode);
+                }
             }, 
-            0x00EE => {
-                self.pc = self.old_pc;
-            },
             0x1000..0x1FFF => {
                 self.pc = (opcode &0xFFF) as usize; 
             },
             0x2000..0x2FFF => {
-                self.old_pc = self.pc;
+                self.stack[self.sp] = self.pc;
+                self.sp += 1;
                 self.pc = (opcode & 0xFFF) as usize;
             },
             0x3000..0x3FFF => {
@@ -110,7 +155,7 @@ impl Chip8 {
                     0x0 => if self.registers[x_reg] == self.registers[y_reg] {
                         self.pc += 2; 
                     },
-                    _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
+                    _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
             },
             0x6000..0x6FFF => {
@@ -149,7 +194,7 @@ impl Chip8 {
                         self.registers[x_reg] = self.registers[x_reg].wrapping_add(self.registers[y_reg]);
                     },
                     0x5 => {
-                        if (self.registers[x_reg] as i32) - (self.registers[y_reg] as i32) > 0 {
+                        if (self.registers[x_reg] as usize) < (self.registers[y_reg] as usize) {
                             self.registers[0xF] = 0x0;
                         } else {
                             self.registers[0xF] = 0x1;
@@ -157,19 +202,19 @@ impl Chip8 {
                         self.registers[x_reg] = self.registers[x_reg].wrapping_sub(self.registers[y_reg]);
                     },
                     0x6 => {
-                        let msb = self.registers[x_reg] >> 7 & 0x1;
-                        self.registers[0xF] = msb;
-                        self.registers[x_reg] = self.registers[y_reg] >> 1;
+                        let lsb = self.registers[x_reg] & 0x1;
+                        self.registers[0xF] = lsb;
+                        self.registers[x_reg] = self.registers[x_reg] >> 1;
                     },
                     0x7 => {
-                        panic!(format!("Invalid opcode {:#04x}", opcode));
+                        panic!("Invalid opcode {:#04x}", opcode);
                     },
                     0xE => {
                         let msb = self.registers[x_reg] >> 7 & 0x1;
                         self.registers[0xF] = msb;
-                        self.registers[x_reg] = self.registers[y_reg] << 1;
+                        self.registers[x_reg] = self.registers[x_reg] << 1;
                     },
-                    _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
+                    _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
             },
             0x9000..0x9FFF => {
@@ -177,14 +222,21 @@ impl Chip8 {
                 let y_reg = ((opcode >> 4) & 0xF) as usize;
                 let instruction = (opcode & 0xF) as usize;
                 match instruction {
-                    0x0 => if self.registers[x_reg] != self.registers[y_reg] {
-                        self.pc += 2; 
+                    0x0 => {
+                        if self.registers[x_reg] != self.registers[y_reg] {
+                            self.pc += 2; 
+                        }
                     },
-                    _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
+                    _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
             },
             0xA000..0xAFFF => {
                 self.index_register = opcode & 0xFFF;
+            },
+            0xB000..0xBFFF => {
+                let base = (opcode & 0xFFF) as usize;
+                let offset = self.registers[0x00] as usize;
+                self.pc = base + offset;
             },
             0xC000..0xCFFF => {
                 let x_reg = ((opcode >> 8) & 0xF) as usize;
@@ -193,6 +245,7 @@ impl Chip8 {
             },
             0xD000..0xDFFF => {
                 self.draw_flag = true;
+                self.registers[0xF] = 0;
                 let x_reg = ((opcode >> 8) & 0xF) as usize;
                 let y_reg = ((opcode >> 4) & 0xF) as usize;
                 let x_coord = self.registers[x_reg] as usize;
@@ -204,7 +257,12 @@ impl Chip8 {
                     for x in 0..8 {
                         if pixel & (0x80 >> x) != 0 {
                             let offset = (x_coord + x)+(PIXEL_WIDTH*(y_coord + i));
-                            self.gfx[offset] ^= 1;
+                            if offset < PIXEL_WIDTH * PIXEL_HEIGHT {
+                                if self.gfx[offset] ^ 1 == 0 {
+                                    self.registers[0xF] = 1;
+                                }
+                                self.gfx[offset] ^= 1;
+                            }
                         }
                     }
                 }
@@ -219,10 +277,9 @@ impl Chip8 {
                         }
                     },
                     0xA1 => {
-                        println!("keys {:#04x}", self.keys);
+                        println!("keys {:#04x}, offset {:#04x}", self.keys, offset);
                         if (self.keys >> offset) & 0x1 == 0 {
                             self.pc += 2; 
-                            //pause();
                         }
                     },
                     _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
@@ -236,7 +293,9 @@ impl Chip8 {
                         self.registers[x_reg] = self.delay_timer;
                     },
                     0x0A => {
-                        panic!(format!("Invalid opcode {:#04x}", opcode));
+                        if self.keys == 0 {
+                            self.pc -= 2;
+                        }
                     },
                     0x15 => {
                         self.delay_timer = self.registers[x_reg];
@@ -252,18 +311,18 @@ impl Chip8 {
                     },
                     0x33 => {
                         let value = self.registers[x_reg];
-                        self.memory[self.index_register as usize] = value / 100;
+                        self.memory[self.index_register as usize] = (value / 100) % 10;
                         self.memory[self.index_register as usize + 1] = (value / 10) % 10;
-                        self.memory[self.index_register as usize + 2] = value % 10;
+                        self.memory[self.index_register as usize + 2] = (value / 1) % 10;
                     },
                     0x55 => {
-                        for x in 0..x_reg {
+                        for x in 0..(x_reg + 1) {
                             self.memory[(self.index_register as usize) + x] = self.registers[x];
                         }
                         self.index_register = self.index_register + (x_reg as u16) + 1;
                     },
                     0x65 => {
-                        for x in 0..x_reg {
+                        for x in 0..(x_reg + 1) {
                             self.registers[x] = self.memory[(self.index_register as usize) + x];
                         }
                         self.index_register = self.index_register + (x_reg as u16) + 1;
@@ -275,6 +334,11 @@ impl Chip8 {
             _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
         }
 
+    }
+
+    fn step(&mut self) {
+        let opcode = self.fetch_opcode().unwrap();
+        //println!("pc: {:#04x}, opcode: {:#04x}", self.pc, opcode);
         if self.sound_timer > 0 {
             self.sound_timer -= 1;
         }
@@ -282,6 +346,8 @@ impl Chip8 {
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
+
+        self.execute_opcode(opcode);
     }
 
 	fn set_key(&mut self, key: u8) {
@@ -345,9 +411,11 @@ fn main() {
             panic!("{}", e);
         });
 
-    window.limit_update_rate(Some(std::time::Duration::from_millis(2)));
+    window.limit_update_rate(Some(std::time::Duration::from_millis(1)));
 
     chip8.load_rom(rom_name).unwrap();
+
+    chip8.print_memory();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
 		window.get_keys().map(|keys| {
@@ -385,5 +453,6 @@ fn main() {
             .unwrap();
 
         chip8.clear_keys();
+        //pause();
     }
 }
