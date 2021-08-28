@@ -101,148 +101,171 @@ impl Chip8 {
         Ok(opcode)
     }
 
-    fn set_register(&mut self, offset: u8, value: u8) {
-        self.registers[offset as usize] = value;
+    fn op_00E0(&mut self) {
+        self.gfx.iter_mut().for_each(|m| *m = 0);
+        self.draw_flag = true;
+    }
+
+    fn op_00EE(&mut self) {
+        self.sp -= 1;
+        self.pc = self.stack[self.sp];
+    }
+
+    fn op_1nnn(&mut self, nnn: usize) {
+        self.pc = nnn; 
+    }
+
+    fn op_2nnn(&mut self, nnn: usize) {
+        self.stack[self.sp] = self.pc;
+        self.sp += 1;
+        self.pc = nnn;
+    }
+
+    fn op_3xkk(&mut self, x: usize, kk: u8) {
+        if self.registers[x] == kk {
+            self.pc += 2;
+        }
+    }
+
+    fn op_4xkk(&mut self, x: usize, kk: u8) {
+        if self.registers[x] != kk {
+            self.pc += 2;
+        }
+    }
+
+    fn op_5xy0(&mut self, x: usize, y: usize) {
+        if self.registers[x] == self.registers[y] { self.pc += 2 }; 
+    }
+
+    fn op_6xkk(&mut self, x: usize, kk: u8) {
+        self.registers[x] = kk;
+    }
+
+    fn op_7xkk(&mut self, x: usize, kk: u8) {
+        self.registers[x] = self.registers[x].wrapping_add(kk);
+    }
+
+    fn op_8xy0(&mut self, x: usize, y: usize) {
+        self.registers[x] = self.registers[y];
+    }
+
+    fn op_8xy1(&mut self, x: usize, y: usize) {
+        self.registers[x] = self.registers[x] | self.registers[y]; 
+    }
+
+    fn op_8xy2(&mut self, x: usize, y: usize) {
+        self.registers[x] = self.registers[x] & self.registers[y]; 
+    }
+
+    fn op_8xy3(&mut self, x: usize, y: usize) {
+        self.registers[x] = self.registers[x] ^ self.registers[y]; 
+    }
+
+    fn op_8xy4(&mut self, x: usize, y: usize) {
+        if (self.registers[x] as usize) + (self.registers[y] as usize) > 255 {
+            self.registers[0xF] = 0x1;
+        } else {
+            self.registers[0xF] = 0x0;
+        }
+        self.registers[x] = self.registers[x].wrapping_add(self.registers[y]);
+    }
+
+    fn op_8xy5(&mut self, x: usize, y: usize) {
+        if (self.registers[x] as usize) < (self.registers[y] as usize) {
+            self.registers[0xF] = 0x0;
+        } else {
+            self.registers[0xF] = 0x1;
+        }
+        self.registers[x] = self.registers[x].wrapping_sub(self.registers[y]);
+    }
+
+    fn op_8xy6(&mut self, x: usize, y: usize) {
+        let lsb = self.registers[x] & 0x1;
+        self.registers[0xF] = lsb;
+        self.registers[x] = self.registers[x] >> 1;
+    }
+
+    fn op_8xy7(&mut self, x: usize, y: usize) {
+    }
+
+    fn op_8xyE(&mut self, x: usize, y: usize) {
+        let msb = self.registers[x] >> 7 & 0x1;
+        self.registers[0xF] = msb;
+        self.registers[x] = self.registers[x] << 1;
+    }
+
+    fn op_9xy0(&mut self, x: usize, y: usize) {
+        if self.registers[x] != self.registers[y] {
+            self.pc += 2; 
+        }
+    }
+
+    fn op_Annn(&mut self, nnn: usize) {
+        self.index_register = nnn as u16;
+    }
+
+    fn op_Bnnn(&mut self, nnn: usize) {
+        let offset = self.registers[0x00] as usize;
+        self.pc = nnn + offset;
+    }
+
+    fn op_Cxkk(&mut self, x: usize, kk: u8) {
+        let rando: u8 = rand::thread_rng().gen();
+        self.registers[x] = rando & kk;
     }
 
     fn execute_opcode(&mut self, opcode: u16) {
         println!("pc: {:#04x}, opcode: {:#04x}", self.pc-2, opcode);
         self.print_registers();
+        let x_reg = ((opcode >> 8) & 0x000F) as usize;
+        let y_reg = ((opcode >> 4) & 0x000F) as usize;
+        let nnn = (opcode & 0x0FFF) as usize;
+        let kk = (opcode & 0x00FF) as u8;
+        let instruction = (opcode & 0x000F) as usize;
+        let n = instruction;
+
         match opcode {
-            0x0000..0x0FFF => {
-                if opcode == 0x00E0 {
-                    self.gfx.iter_mut().for_each(|m| *m = 0);
-                    self.draw_flag = true;
-                } else if opcode == 0x00EE {
-                    self.sp -= 1;
-                    self.pc = self.stack[self.sp];
-                } else {
-                    panic!("Invalid opcode {:#04x}", opcode);
-                }
-            }, 
-            0x1000..0x1FFF => {
-                self.pc = (opcode &0xFFF) as usize; 
-            },
-            0x2000..0x2FFF => {
-                self.stack[self.sp] = self.pc;
-                self.sp += 1;
-                self.pc = (opcode & 0xFFF) as usize;
-            },
-            0x3000..0x3FFF => {
-                let register_offset = ((opcode >> 8) & 0xF) as usize;
-                let value = (opcode & 0xFF) as u8;
-                if self.registers[register_offset] == value {
-                    self.pc += 2;
-                }
-            },
-            0x4000..0x4FFF => {
-                let register_offset = ((opcode >> 8) & 0xF) as usize;
-                let value = (opcode & 0xFF) as u8;
-                if self.registers[register_offset] != value {
-                    self.pc += 2;
-                }
-            },
+            0x00E0 => self.op_00E0(),
+            0x00EE => self.op_00EE(),
+            0x1000..0x1FFF => self.op_1nnn(nnn),
+            0x2000..0x2FFF => self.op_2nnn(nnn),
+            0x3000..0x3FFF => self.op_3xkk(x_reg, kk),
+            0x4000..0x4FFF => self.op_4xkk(x_reg, kk),
             0x5000..0x5FFF => {
-                let x_reg = ((opcode >> 8) & 0xF) as usize;
-                let y_reg = ((opcode >> 4) & 0xF) as usize;
-                let instruction = (opcode & 0xF) as usize;
                 match instruction {
-                    0x0 => if self.registers[x_reg] == self.registers[y_reg] {
-                        self.pc += 2; 
-                    },
+                    0x0 => self.op_5xy0(x_reg, y_reg),
                     _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
             },
-            0x6000..0x6FFF => {
-                let register_offset = ((opcode >> 8) & 0xF) as u8;
-                let value = (opcode & 0xFF) as u8;
-                self.set_register(register_offset, value);
-            },
-            0x7000..0x7FFF => {
-                let register_offset = ((opcode >> 8) & 0xF) as usize;
-                let value = (opcode & 0xFF) as u8;
-                self.registers[register_offset] = self.registers[register_offset].wrapping_add(value);
-            },
+            0x6000..0x6FFF => self.op_6xkk(x_reg, kk),
+            0x7000..0x7FFF => self.op_7xkk(x_reg, kk),
             0x8000..0x8FFF => {
-                let x_reg = ((opcode >> 8) & 0xF) as usize;
-                let y_reg = ((opcode >> 4) & 0xF) as usize;
-                let instruction = (opcode & 0xF) as usize;
                 match instruction {
-                    0x0 => {
-                        self.registers[x_reg] = self.registers[y_reg];
-                    },
-                    0x1 => {
-                        self.registers[x_reg] = self.registers[x_reg] | self.registers[y_reg]; 
-                    },
-                    0x2 => {
-                        self.registers[x_reg] = self.registers[x_reg] & self.registers[y_reg]; 
-                    },
-                    0x3 => {
-                        self.registers[x_reg] = self.registers[x_reg] ^ self.registers[y_reg]; 
-                    },
-                    0x4 => {
-                        if (self.registers[x_reg] as usize) + (self.registers[y_reg] as usize) > 255 {
-                            self.registers[0xF] = 0x1;
-                        } else {
-                            self.registers[0xF] = 0x0;
-                        }
-                        self.registers[x_reg] = self.registers[x_reg].wrapping_add(self.registers[y_reg]);
-                    },
-                    0x5 => {
-                        if (self.registers[x_reg] as usize) < (self.registers[y_reg] as usize) {
-                            self.registers[0xF] = 0x0;
-                        } else {
-                            self.registers[0xF] = 0x1;
-                        }
-                        self.registers[x_reg] = self.registers[x_reg].wrapping_sub(self.registers[y_reg]);
-                    },
-                    0x6 => {
-                        let lsb = self.registers[x_reg] & 0x1;
-                        self.registers[0xF] = lsb;
-                        self.registers[x_reg] = self.registers[x_reg] >> 1;
-                    },
-                    0x7 => {
-                        panic!("Invalid opcode {:#04x}", opcode);
-                    },
-                    0xE => {
-                        let msb = self.registers[x_reg] >> 7 & 0x1;
-                        self.registers[0xF] = msb;
-                        self.registers[x_reg] = self.registers[x_reg] << 1;
-                    },
+                    0x0 => self.op_8xy0(x_reg, y_reg),
+                    0x1 => self.op_8xy1(x_reg, y_reg),
+                    0x2 => self.op_8xy2(x_reg, y_reg),
+                    0x3 => self.op_8xy3(x_reg, y_reg),
+                    0x4 => self.op_8xy4(x_reg, y_reg),
+                    0x5 => self.op_8xy5(x_reg, y_reg),
+                    0x6 => self.op_8xy6(x_reg, y_reg),
+                    0x7 => self.op_8xy7(x_reg, y_reg),
+                    0xE => self.op_8xyE(x_reg, y_reg),
                     _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
             },
             0x9000..0x9FFF => {
-                let x_reg = ((opcode >> 8) & 0xF) as usize;
-                let y_reg = ((opcode >> 4) & 0xF) as usize;
                 let instruction = (opcode & 0xF) as usize;
                 match instruction {
-                    0x0 => {
-                        if self.registers[x_reg] != self.registers[y_reg] {
-                            self.pc += 2; 
-                        }
-                    },
+                    0x0 => self.op_9xy0(x_reg, y_reg),
                     _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
             },
-            0xA000..0xAFFF => {
-                self.index_register = opcode & 0xFFF;
-            },
-            0xB000..0xBFFF => {
-                let base = (opcode & 0xFFF) as usize;
-                let offset = self.registers[0x00] as usize;
-                self.pc = base + offset;
-            },
-            0xC000..0xCFFF => {
-                let x_reg = ((opcode >> 8) & 0xF) as usize;
-                let rando: u8 = rand::thread_rng().gen();
-                self.registers[x_reg] = rando & ((opcode & 0xFF) as u8);
-            },
+            0xA000..0xAFFF => self.op_Annn(nnn),
+            0xB000..0xBFFF => self.op_Bnnn(nnn),
+            0xC000..0xCFFF => self.op_Cxkk(x_reg, kk),
             0xD000..0xDFFF => {
                 self.draw_flag = true;
                 self.registers[0xF] = 0;
-                let x_reg = ((opcode >> 8) & 0xF) as usize;
-                let y_reg = ((opcode >> 4) & 0xF) as usize;
                 let x_coord = self.registers[x_reg] as usize;
                 let y_coord = self.registers[y_reg] as usize;
                 let num_bytes = (opcode & 0xF) as usize;
@@ -263,7 +286,6 @@ impl Chip8 {
                 }
             },
             0xE000..0xEFFF => {
-                let x_reg = ((opcode >> 8) & 0xF) as usize;
                 let instruction = (opcode & 0xFF) as usize;
                 let offset = self.registers[x_reg];
                 match instruction {
@@ -283,7 +305,6 @@ impl Chip8 {
                 }
             },
             0xF000..0xFFFF => {
-                let x_reg = ((opcode >> 8) & 0xF) as usize;
                 let instruction = (opcode & 0xFF) as usize;
                 match instruction {
                     0x07 => {
