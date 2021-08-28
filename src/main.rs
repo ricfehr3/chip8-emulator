@@ -9,6 +9,10 @@ use std::io::{stdin, stdout, Read, Write};
 use std::fs::File;
 use rand::Rng;
 
+// sound
+use rodio::{OutputStream, Sink};
+use rodio::source::{SineWave, Source};
+
 const PIXEL_WIDTH: usize = 64;
 const PIXEL_HEIGHT: usize = 32;
 const FOREGROUND_COLOR: u32 = 0xFFFFFFFF;
@@ -64,9 +68,6 @@ impl Chip8 {
         for x in 0..80 {
             memory_tmp[x] = CHIP8_FONTSET[x];
         }
-        //for (place, data) in CHIP8_FONTSET.iter_mut().zip(memory_tmp.iter()) {
-                //*place = *data
-        //}
 
         Chip8 {
             memory: memory_tmp,
@@ -456,6 +457,13 @@ fn main() {
             panic!("{}", e);
         });
 
+    // sound
+	let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+	let sink = Sink::try_new(&stream_handle).unwrap();
+
+	let source = SineWave::new(440).amplify(0.20);
+	sink.append(source);
+
     window.limit_update_rate(Some(std::time::Duration::from_millis(2)));
 
     chip8.load_rom(rom_name).unwrap();
@@ -492,6 +500,8 @@ fn main() {
             chip8.draw_flag = false;
             update_graphics(&mut chip8, &mut display_buf);
         }
+
+        if chip8.sound_timer > 0 { sink.play() } else { sink.pause() }
 
         window
             .update_with_buffer(&display_buf, PIXEL_WIDTH, PIXEL_HEIGHT)
