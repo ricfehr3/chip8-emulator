@@ -52,7 +52,7 @@ struct Chip8 {
     sound_timer: u8,
     gfx: [u8; PIXEL_WIDTH * PIXEL_HEIGHT],
     draw_flag: bool,
-	keys: u16,
+	keys: u32,
     sp: usize,
     stack: [usize; STACK_SIZE],
 }
@@ -78,7 +78,7 @@ impl Chip8 {
             sound_timer: 0x0,
             gfx: [0; PIXEL_WIDTH * PIXEL_HEIGHT],
             draw_flag: false,
-			keys: 0x0000,
+			keys: 0x00000000,
             sp: 0,
             stack: [0; STACK_SIZE],
         }
@@ -118,11 +118,6 @@ impl Chip8 {
                     self.pc = self.stack[self.sp];
                 } else {
                     panic!("Invalid opcode {:#04x}", opcode);
-                    //let address = (opcode & 0xFFF) as usize;
-                    //let hi = self.memory[address];
-                    //let lo = self.memory[address + 1];
-                    //let sub_opcode = ((hi as u16) << 8) | (lo as u16);
-                    //self.execute_opcode(sub_opcode);
                 }
             }, 
             0x1000..0x1FFF => {
@@ -268,8 +263,9 @@ impl Chip8 {
                 }
             },
             0xE000..0xEFFF => {
-                let offset = ((opcode >> 8) & 0xF) as usize;
+                let x_reg = ((opcode >> 8) & 0xF) as usize;
                 let instruction = (opcode & 0xFF) as usize;
+                let offset = self.registers[x_reg];
                 match instruction {
                     0x9E => {
                         if (self.keys >> offset) & 0x1 != 0 {
@@ -281,6 +277,7 @@ impl Chip8 {
                         if (self.keys >> offset) & 0x1 == 0 {
                             self.pc += 2; 
                         }
+                        //pause();
                     },
                     _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
                 }
@@ -295,6 +292,12 @@ impl Chip8 {
                     0x0A => {
                         if self.keys == 0 {
                             self.pc -= 2;
+                        } else {
+                            for x in 0..0x10 {
+                                if (self.keys >> x) & 0x1 == 1 {
+                                    self.registers[x_reg] = x;
+                                }
+                            }
                         }
                     },
                     0x15 => {
@@ -307,7 +310,7 @@ impl Chip8 {
                         self.index_register += self.registers[x_reg] as u16;
                     },
                     0x29 => {
-                        self.index_register = self.registers[x_reg] as u16;
+                        self.index_register = (self.registers[x_reg] as u16) * 5;
                     },
                     0x33 => {
                         let value = self.registers[x_reg];
@@ -351,7 +354,8 @@ impl Chip8 {
     }
 
 	fn set_key(&mut self, key: u8) {
-		self.keys |= (0x1 << (key - 1));	
+		//self.keys |= (0x1 << (key - 1));	
+		self.keys |= 0x1 << key;	
 	}
 
 	fn clear_keys(&mut self) {
@@ -411,7 +415,7 @@ fn main() {
             panic!("{}", e);
         });
 
-    window.limit_update_rate(Some(std::time::Duration::from_millis(1)));
+    window.limit_update_rate(Some(std::time::Duration::from_millis(2)));
 
     chip8.load_rom(rom_name).unwrap();
 
@@ -434,8 +438,8 @@ fn main() {
 					Key::D => chip8.set_key(0x9),
 					Key::F => chip8.set_key(0xE),
 					Key::Z => chip8.set_key(0xA),
-					Key::X => chip8.set_key(0xB),
-					Key::C => chip8.set_key(0xC),
+					Key::X => chip8.set_key(0x0),
+					Key::C => chip8.set_key(0xB),
 					Key::V => chip8.set_key(0xF),
 					_ => (),
 				}
@@ -453,6 +457,5 @@ fn main() {
             .unwrap();
 
         chip8.clear_keys();
-        //pause();
     }
 }
