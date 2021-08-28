@@ -214,6 +214,95 @@ impl Chip8 {
         self.registers[x] = rando & kk;
     }
 
+    fn op_Dxyn(&mut self, x: usize, y: usize, n: usize) {
+        self.draw_flag = true;
+        self.registers[0xF] = 0;
+        let x_coord = self.registers[x] as usize;
+        let y_coord = self.registers[y] as usize;
+        let offset = self.index_register as usize;
+        for i in 0..n {
+            let pixel = self.memory[offset + i];
+            for x in 0..8 {
+                if pixel & (0x80 >> x) != 0 {
+                    let offset = (x_coord + x)+(PIXEL_WIDTH*(y_coord + i));
+                    if offset < PIXEL_WIDTH * PIXEL_HEIGHT {
+                        if self.gfx[offset] ^ 1 == 0 {
+                            self.registers[0xF] = 1;
+                        }
+                        self.gfx[offset] ^= 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fn op_Ex9E(&mut self, x: usize) {
+        let offset = self.registers[x];
+        if (self.keys >> offset) & 0x1 != 0 {
+            self.pc += 2; 
+        }
+    }
+
+    fn op_ExA1(&mut self, x: usize) {
+        let offset = self.registers[x];
+        if (self.keys >> offset) & 0x1 == 0 {
+            self.pc += 2; 
+        }
+    }
+
+    fn op_Fx07(&mut self, x: usize) {
+        self.registers[x] = self.delay_timer;
+    }
+
+    fn op_Fx0A(&mut self, x: usize) {
+        if self.keys == 0 {
+            self.pc -= 2;
+        } else {
+            for i in 0..0x10 {
+                if (self.keys >> i) & 0x1 == 1 {
+                    self.registers[x] = i;
+                }
+            }
+        }
+    }
+
+    fn op_Fx15(&mut self, x: usize) {
+        self.delay_timer = self.registers[x];
+    }
+
+    fn op_Fx18(&mut self, x: usize) {
+        self.sound_timer = self.registers[x];
+    }
+
+    fn op_Fx1E(&mut self, x: usize) {
+        self.index_register += self.registers[x] as u16;
+    }
+
+    fn op_Fx29(&mut self, x: usize) {
+        self.index_register = (self.registers[x] as u16) * 5;
+    }
+
+    fn op_Fx33(&mut self, x: usize) {
+        let value = self.registers[x];
+        self.memory[self.index_register as usize] = (value / 100) % 10;
+        self.memory[self.index_register as usize + 1] = (value / 10) % 10;
+        self.memory[self.index_register as usize + 2] = (value / 1) % 10;
+    }
+
+    fn op_Fx55(&mut self, x: usize) {
+        for i in 0..(x + 1) {
+            self.memory[(self.index_register as usize) + i] = self.registers[i];
+        }
+        self.index_register = self.index_register + (x as u16) + 1;
+    }
+
+    fn op_Fx65(&mut self, x: usize) {
+        for i in 0..(x + 1) {
+            self.registers[i] = self.memory[(self.index_register as usize) + i];
+        }
+        self.index_register = self.index_register + (x as u16) + 1;
+    }
+
     fn execute_opcode(&mut self, opcode: u16) {
         println!("pc: {:#04x}, opcode: {:#04x}", self.pc-2, opcode);
         self.print_registers();
@@ -221,8 +310,9 @@ impl Chip8 {
         let y_reg = ((opcode >> 4) & 0x000F) as usize;
         let nnn = (opcode & 0x0FFF) as usize;
         let kk = (opcode & 0x00FF) as u8;
-        let instruction = (opcode & 0x000F) as usize;
-        let n = instruction;
+        let n = (opcode & 0x000F) as usize;
+        let byte_instruction = kk;
+        let nibble_instruction = n;
 
         match opcode {
             0x00E0 => self.op_00E0(),
@@ -232,7 +322,7 @@ impl Chip8 {
             0x3000..0x3FFF => self.op_3xkk(x_reg, kk),
             0x4000..0x4FFF => self.op_4xkk(x_reg, kk),
             0x5000..0x5FFF => {
-                match instruction {
+                match nibble_instruction {
                     0x0 => self.op_5xy0(x_reg, y_reg),
                     _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
@@ -240,7 +330,7 @@ impl Chip8 {
             0x6000..0x6FFF => self.op_6xkk(x_reg, kk),
             0x7000..0x7FFF => self.op_7xkk(x_reg, kk),
             0x8000..0x8FFF => {
-                match instruction {
+                match nibble_instruction {
                     0x0 => self.op_8xy0(x_reg, y_reg),
                     0x1 => self.op_8xy1(x_reg, y_reg),
                     0x2 => self.op_8xy2(x_reg, y_reg),
@@ -254,8 +344,7 @@ impl Chip8 {
                 };
             },
             0x9000..0x9FFF => {
-                let instruction = (opcode & 0xF) as usize;
-                match instruction {
+                match nibble_instruction {
                     0x0 => self.op_9xy0(x_reg, y_reg),
                     _ => panic!("Invalid opcode {:#04x}", opcode),
                 };
@@ -263,94 +352,25 @@ impl Chip8 {
             0xA000..0xAFFF => self.op_Annn(nnn),
             0xB000..0xBFFF => self.op_Bnnn(nnn),
             0xC000..0xCFFF => self.op_Cxkk(x_reg, kk),
-            0xD000..0xDFFF => {
-                self.draw_flag = true;
-                self.registers[0xF] = 0;
-                let x_coord = self.registers[x_reg] as usize;
-                let y_coord = self.registers[y_reg] as usize;
-                let num_bytes = (opcode & 0xF) as usize;
-                let offset = self.index_register as usize;
-                for i in 0..num_bytes {
-                    let pixel = self.memory[offset + i];
-                    for x in 0..8 {
-                        if pixel & (0x80 >> x) != 0 {
-                            let offset = (x_coord + x)+(PIXEL_WIDTH*(y_coord + i));
-                            if offset < PIXEL_WIDTH * PIXEL_HEIGHT {
-                                if self.gfx[offset] ^ 1 == 0 {
-                                    self.registers[0xF] = 1;
-                                }
-                                self.gfx[offset] ^= 1;
-                            }
-                        }
-                    }
-                }
-            },
+            0xD000..0xDFFF => self.op_Dxyn(x_reg, y_reg, n),
             0xE000..0xEFFF => {
-                let instruction = (opcode & 0xFF) as usize;
-                let offset = self.registers[x_reg];
-                match instruction {
-                    0x9E => {
-                        if (self.keys >> offset) & 0x1 != 0 {
-                            self.pc += 2; 
-                        }
-                    },
-                    0xA1 => {
-                        println!("keys {:#04x}, offset {:#04x}", self.keys, offset);
-                        if (self.keys >> offset) & 0x1 == 0 {
-                            self.pc += 2; 
-                        }
-                        //pause();
-                    },
+                match byte_instruction {
+                    0x9E => self.op_Ex9E(x_reg),
+                    0xA1 => self.op_ExA1(x_reg),
                     _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
                 }
             },
             0xF000..0xFFFF => {
-                let instruction = (opcode & 0xFF) as usize;
-                match instruction {
-                    0x07 => {
-                        self.registers[x_reg] = self.delay_timer;
-                    },
-                    0x0A => {
-                        if self.keys == 0 {
-                            self.pc -= 2;
-                        } else {
-                            for x in 0..0x10 {
-                                if (self.keys >> x) & 0x1 == 1 {
-                                    self.registers[x_reg] = x;
-                                }
-                            }
-                        }
-                    },
-                    0x15 => {
-                        self.delay_timer = self.registers[x_reg];
-                    },
-                    0x18 => {
-                        self.sound_timer = self.registers[x_reg];
-                    },
-                    0x1E => {
-                        self.index_register += self.registers[x_reg] as u16;
-                    },
-                    0x29 => {
-                        self.index_register = (self.registers[x_reg] as u16) * 5;
-                    },
-                    0x33 => {
-                        let value = self.registers[x_reg];
-                        self.memory[self.index_register as usize] = (value / 100) % 10;
-                        self.memory[self.index_register as usize + 1] = (value / 10) % 10;
-                        self.memory[self.index_register as usize + 2] = (value / 1) % 10;
-                    },
-                    0x55 => {
-                        for x in 0..(x_reg + 1) {
-                            self.memory[(self.index_register as usize) + x] = self.registers[x];
-                        }
-                        self.index_register = self.index_register + (x_reg as u16) + 1;
-                    },
-                    0x65 => {
-                        for x in 0..(x_reg + 1) {
-                            self.registers[x] = self.memory[(self.index_register as usize) + x];
-                        }
-                        self.index_register = self.index_register + (x_reg as u16) + 1;
-                    },
+                match byte_instruction {
+                    0x07 => self.op_Fx07(x_reg),
+                    0x0A => self.op_Fx0A(x_reg),
+                    0x15 => self.op_Fx15(x_reg),
+                    0x18 => self.op_Fx18(x_reg),
+                    0x1E => self.op_Fx1E(x_reg),
+                    0x29 => self.op_Fx29(x_reg),
+                    0x33 => self.op_Fx33(x_reg),
+                    0x55 => self.op_Fx55(x_reg),
+                    0x65 => self.op_Fx65(x_reg),
                     _ => panic!(format!("Invalid opcode {:#04x}", opcode)),
                 }
             }
