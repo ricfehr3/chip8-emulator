@@ -59,6 +59,7 @@ struct Chip8 {
 	keys: u32,
     sp: usize,
     stack: [usize; STACK_SIZE],
+    sound_iterator: u32,
 }
 
 impl Chip8 {
@@ -82,6 +83,7 @@ impl Chip8 {
 			keys: 0x00000000,
             sp: 0,
             stack: [0; STACK_SIZE],
+            sound_iterator: 0,
         }
     }
 
@@ -383,14 +385,20 @@ impl Chip8 {
 
     fn step(&mut self) {
         let opcode = self.fetch_opcode().unwrap();
-        //println!("pc: {:#04x}, opcode: {:#04x}", self.pc, opcode);
-        if self.sound_timer > 0 {
-            self.sound_timer -= 1;
+
+        if self.sound_iterator % 16 == 0 {
+            if self.sound_timer > 0 {
+                self.sound_timer -= 1;
+            }
+
+            if self.delay_timer > 0 {
+                self.delay_timer -= 1;
+            }
+
+            self.sound_iterator = 0;
         }
 
-        if self.delay_timer > 0 {
-            self.delay_timer -= 1;
-        }
+        self.sound_iterator = self.sound_iterator.wrapping_add(1);
 
         self.execute_opcode(opcode);
     }
@@ -464,7 +472,7 @@ fn main() {
 	let source = SineWave::new(440).amplify(0.20);
 	sink.append(source);
 
-    window.limit_update_rate(Some(std::time::Duration::from_millis(2)));
+    window.limit_update_rate(Some(std::time::Duration::from_millis(1)));
 
     chip8.load_rom(rom_name).unwrap();
 
